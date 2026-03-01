@@ -1,3 +1,13 @@
 # Photos Products Assistant
 
-The user has an app on their iPhone. On the app, they can have a conversation with an assistant. The assistant is able to create stuff from the pictures they have in their gallery. Stuff the assistant is able to create will include photo albums, photo walls, and videos. 
+An assistant that creates digital products from your photo gallery through a conversational interface.
+
+## Sub-projects
+- **/server:** Python backend for conversation processing (LLM-based) and product generation logic.
+- **/swift-client:** iOS application (Swift) for user interaction, gallery access, and product visualization.
+- **/web-client:** Web dashboard for visualizing and interacting with the system during development.
+
+## Tech Stack
+- **Client:** Swift (iOS)
+- **Web:** [TBD: React/TypeScript/Angular]
+- **Server:** Python (LLM integration)
