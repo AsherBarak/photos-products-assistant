@@ -1,25 +1,44 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import { vi } from 'vitest'
 
 describe('App', () => {
-  it('renders chat interface', () => {
+  beforeEach(() => {
+    // Mock both endpoints
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/process-photos')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ important_days: [], trips: [] })
+        })
+      }
+      if (url.includes('/chat')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ response: 'Test Response' })
+        })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+  })
+
+  it('renders chat interface', async () => {
     render(<App />)
-    expect(screen.getByPlaceholderText(/type a message/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
+    // Wait for processing to finish
+    await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
+    
+    expect(screen.getByPlaceholderText(/Tell me about your photos/i)).toBeInTheDocument()
+    expect(screen.getByRole('button')).toBeInTheDocument()
   })
 
   it('allows user to send messages', async () => {
-    // Mock the fetch call
-    const mockResponse = { response: 'Test Response' }
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockResponse)
-    } as Response)
-
     render(<App />)
-    const input = screen.getByPlaceholderText(/type a message/i)
-    const button = screen.getByRole('button', { name: /send/i })
+    
+    // Wait for processing to finish
+    await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
+
+    const input = screen.getByPlaceholderText(/Tell me about your photos/i)
+    const button = screen.getByRole('button')
 
     fireEvent.change(input, { target: { value: 'Hello' } })
     fireEvent.click(button)
