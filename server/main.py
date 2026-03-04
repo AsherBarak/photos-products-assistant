@@ -62,10 +62,30 @@ class Picker(BaseModel):
     type: str # "text" or "image"
     options: List[PickerOption]
 
+class Scope(BaseModel):
+    time_range: Optional[dict] = None   # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
+    trip: Optional[str] = None
+    people: Optional[List[str]] = None
+    themes: Optional[List[str]] = None
+    product_type: Optional[str] = None
+
+class EmbeddingReadiness(BaseModel):
+    total: int
+    ready: int
+    in_scope: int
+    in_scope_ready: int
+
+class DataReadiness(BaseModel):
+    metadata: str  # "pending" | "complete"
+    clip_embeddings: EmbeddingReadiness
+    face_embeddings: EmbeddingReadiness
+
 class State(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     summary: Optional[PhotoSummary]
     picker: Optional[Picker]
+    scope: Optional[Scope]
+    data_readiness: Optional[DataReadiness]
 
 # --- Tools Definition ---
 
@@ -101,7 +121,20 @@ def show_custom_picker(options: List[str]):
         "options": [{"id": f"opt_{i}", "label": opt} for i, opt in enumerate(options)]
     }
 
-tools = [show_timeframe_picker, show_person_picker, show_custom_picker]
+@tool
+def update_scope(
+    time_range: Optional[dict] = None,
+    trip: Optional[str] = None,
+    people: Optional[List[str]] = None,
+    themes: Optional[List[str]] = None,
+    product_type: Optional[str] = None
+):
+    """Update the product scope based on what the user wants. Call this whenever the conversation
+    narrows or changes what photos should be included in the product. Only include fields that
+    have been established in the conversation."""
+    return {k: v for k, v in locals().items() if v is not None}
+
+tools = [show_timeframe_picker, show_person_picker, show_custom_picker, update_scope]
 tool_node = ToolNode(tools)
 
 # Initialize LLM
@@ -117,11 +150,20 @@ def chatbot(state: State):
         summary_context = f"\n\nUser's Photo Summary: {state['summary']}"
     else:
         summary_context = "\n\nNOTE: The user's photo metadata is still being analyzed. Focus on general ideas."
-    
-    system_msg = SystemMessage(content=f"""You are a Photos Products Assistant for Mixtiles. 
+
+    scope_context = ""
+    if state.get("scope"):
+        scope_context = f"\n\nCurrent Scope (what's been established so far): {state['scope'].model_dump_json()}"
+
+    data_readiness_context = ""
+    if state.get("data_readiness"):
+        dr = state["data_readiness"]
+        data_readiness_context = f"\n\nData Readiness (what data is available on the server):\n- Metadata: {dr.metadata}\n- CLIP embeddings: {dr.clip_embeddings.in_scope_ready}/{dr.clip_embeddings.in_scope} in-scope ready ({dr.clip_embeddings.ready}/{dr.clip_embeddings.total} total)\n- Face embeddings: {dr.face_embeddings.in_scope_ready}/{dr.face_embeddings.in_scope} in-scope ready ({dr.face_embeddings.ready}/{dr.face_embeddings.total} total)"
+
+    system_msg = SystemMessage(content=f"""You are a Photos Products Assistant for Mixtiles.
 Goal: Help users create photo products (albums, prints, etc.).
 Tone: Professional, charming, and witty.
-Context: {summary_context}
+Context: {summary_context}{scope_context}{data_readiness_context}
 
 Guidelines:
 - ALWAYS use a picker tool when presenting options. NEVER list options as bullet points or numbered lists in your text.
@@ -129,6 +171,8 @@ Guidelines:
 - If you need them to identify a person, use 'show_person_picker'.
 - For ANY other choice (product types, ideas, next steps), use 'show_custom_picker' with 2-4 options. Labels must be 1-3 words max.
 - Keep your text message brief (1-2 sentences) — let the picker do the work.
+- ALWAYS call 'update_scope' whenever the conversation establishes or changes scope — including time range, trip, people, themes, or product type. Call it alongside any picker tool if the user's choice narrows scope.
+- If data_readiness shows embeddings are still processing, let the user know gracefully when relevant (e.g. "I'm still identifying people in your photos").
 """)
     
     response = llm.invoke([system_msg] + state["messages"])
@@ -141,23 +185,30 @@ def post_tool_routing(state: State):
     return END
 
 def handle_tool_outputs(state: State):
-    # Extract picker info from tool messages in the state
+    import json
+    # Extract picker and scope info from tool messages in the state
     picker = None
+    scope = state.get("scope")
     for msg in reversed(state["messages"]):
         if isinstance(msg, ToolMessage):
-            import json
             try:
                 # The tool output is a stringified dict
-                res = json.loads(msg.content.replace("'", "\"")) 
-                if isinstance(res, dict) and "options" in res:
-                    picker = Picker(
-                        type=res["type"],
-                        options=[PickerOption(**opt) for opt in res["options"]]
-                    )
-                    break
+                res = json.loads(msg.content.replace("'", "\""))
+                if isinstance(res, dict):
+                    if "options" in res:
+                        # This is a picker tool output
+                        picker = Picker(
+                            type=res["type"],
+                            options=[PickerOption(**opt) for opt in res["options"]]
+                        )
+                    elif msg.name == "update_scope":
+                        # This is a scope update — merge with existing scope
+                        existing = scope.model_dump() if scope else {}
+                        existing.update(res)
+                        scope = Scope(**existing)
             except:
                 continue
-    return {"picker": picker}
+    return {"picker": picker, "scope": scope}
 
 # Build the Graph
 workflow = StateGraph(State)
@@ -179,11 +230,14 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     summary: Optional[PhotoSummary] = None
+    scope: Optional[Scope] = None
+    data_readiness: Optional[DataReadiness] = None
 
 class ChatResponse(BaseModel):
     response: str
     action: Optional[str] = None
     picker: Optional[Picker] = None
+    scope: Optional[Scope] = None
 
 @app.get("/")
 def read_root():
@@ -271,10 +325,16 @@ async def chat(request: ChatRequest):
     # Invoke the graph
     log.info(f"User: {request.messages[-1].content}")
     try:
-        result = await chat_graph.ainvoke({"messages": langchain_messages, "summary": request.summary})
+        result = await chat_graph.ainvoke({
+            "messages": langchain_messages,
+            "summary": request.summary,
+            "scope": request.scope,
+            "data_readiness": request.data_readiness,
+        })
 
-        # Get the last message and picker from the result
+        # Get the last message, picker, and scope from the result
         picker = result.get("picker")
+        scope = result.get("scope")
 
         # Find the last AI message with text content (only from new messages)
         new_messages = result["messages"][len(langchain_messages):]
@@ -294,7 +354,7 @@ async def chat(request: ChatRequest):
                 if response_text:
                     break
 
-        response = ChatResponse(response=response_text, picker=picker)
+        response = ChatResponse(response=response_text, picker=picker, scope=scope)
         log.info(f"Assistant: {response.response}")
         if response.picker:
             log.info(f"Picker: {[o.label for o in response.picker.options]}")
