@@ -72,3 +72,42 @@ class MockPhotoService implements PhotoService {
 export function createMockPhotoService(): PhotoService {
   return new MockPhotoService()
 }
+
+// --- Local (real photos) implementation ---
+
+class LocalPhotoService implements PhotoService {
+  private cachedPhotos: PhotoMetadata[] | null = null
+
+  async fetchAllPhotos(): Promise<PhotoMetadata[]> {
+    if (this.cachedPhotos) return this.cachedPhotos
+
+    const response = await fetch('/photo-index.json')
+    if (!response.ok) throw new Error(`Failed to fetch photo index: ${response.status}`)
+
+    const entries: Array<{ id: string; timestamp: string; latitude: number; longitude: number; exif: Record<string, any> }> = await response.json()
+
+    this.cachedPhotos = entries.map(e => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      latitude: e.latitude,
+      longitude: e.longitude,
+      exif: e.exif,
+      additional_metadata: {},
+    }))
+
+    return this.cachedPhotos
+  }
+
+  async fetchEmbedding(photoId: string): Promise<PhotoEmbedding> {
+    return {
+      photo_id: photoId,
+      clip_embedding: Array.from({ length: 512 }, () => Math.random() * 2 - 1),
+      face_embedding: Array.from({ length: 128 }, () => Math.random() * 2 - 1),
+      faces_detected: Math.floor(Math.random() * 4),
+    }
+  }
+}
+
+export function createLocalPhotoService(): PhotoService {
+  return new LocalPhotoService()
+}

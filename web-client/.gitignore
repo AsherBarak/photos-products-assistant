@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+public/photo-index.json
 dist-ssr
 *.local
 .env

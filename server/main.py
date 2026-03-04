@@ -39,29 +39,31 @@ def read_root():
 @app.post("/process-photos", response_model=PhotoSummary)
 async def process_photos(photos: List[PhotoMetadata]):
     # Programmatic pre-processing
-    day_counts = Counter()
+    day_data: dict[str, dict] = {}
     for p in photos:
         date_str = p.timestamp.split("T")[0]
-        day_counts[date_str] += 1
+        if date_str not in day_data:
+            day_data[date_str] = {"count": 0, "lat": None, "lng": None}
+        day_data[date_str]["count"] += 1
+        if day_data[date_str]["lat"] is None and p.latitude and p.longitude:
+            day_data[date_str]["lat"] = p.latitude
+            day_data[date_str]["lng"] = p.longitude
 
-    important_days = [ProcessedDay(date=d, count=c) for d, c in day_counts.items()]
+    important_days = [ProcessedDay(date=d, count=v["count"]) for d, v in day_data.items()]
     important_days.sort(key=lambda x: x.date, reverse=True)
 
-    if DEBUG_MODE:
-        return PhotoSummary(
-            important_days=important_days[:30],
-            trips=[
-                {"start_date": "2024-01-01", "end_date": "2024-01-07", "title": "[DEBUG] Greece Trip"},
-                {"start_date": "2023-05-10", "end_date": "2023-05-15", "title": "[DEBUG] Tehran Trip"}
-            ]
-        )
+    day_summaries = [
+        {"date": d, "count": v["count"], "lat": v["lat"], "lng": v["lng"]}
+        for d, v in sorted(day_data.items(), reverse=True)
+    ][:50]
 
     prompt = f"""
     Analyze the following photo aggregation data.
     Identify significant clusters of photos that likely represent 'trips'.
+    Use the GPS coordinates to determine location names for trip titles.
     Return a JSON summary.
 
-    Data (Date and Photo Count): {[{'date': d.date, 'count': d.count} for d in important_days[:50]]}
+    Data (Date, Photo Count, Sample GPS): {day_summaries}
 
     Output Format (JSON):
     {{
