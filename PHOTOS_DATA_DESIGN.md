@@ -144,7 +144,11 @@ This lets the LLM make informed decisions:
 - "I have 85% of in-scope CLIP embeddings, I can suggest sunset photos"
 - "Face embeddings are only 36% in-scope, I should tell the user I'm still identifying people"
 
-### Remaining design questions
-1. **Server-side embedding storage** — as embeddings stream in, where do they accumulate? (in-memory, Redis, vector DB)
-2. **Session continuity** — if the user leaves and returns, device cache means fast restart. What about server-side state?
-3. **Scope conflicts** — user changes direction mid-conversation (e.g., switches from Greece to Tehran). Client needs to re-prioritize. Is the latest scope always the full truth, or do we need a history?
+### Design decisions
+
+| Question | Decision |
+|----------|----------|
+| **Embedding storage** | In-memory per session (MVP). Vector DB later. |
+| **Session continuity** | Not handled for now. Client re-uploads embeddings on reconnect. |
+| **Startup assumption** | Client always starts assuming server has no embeddings. `data_readiness` communicates what's available. |
+| **Scope updates** | LLM owns scope. It receives previous scope + full conversation history and outputs updated scope each turn. No separate merge logic — the LLM figures out what changed. |
