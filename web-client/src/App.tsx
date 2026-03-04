@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
 interface Message {
@@ -80,6 +80,13 @@ function App() {
   const [summary, setSummary] = useState<PhotoSummary | null>(null)
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false)
   const [picker, setPicker] = useState<Picker | null>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
+    }
+  }, [messages, picker])
 
   useEffect(() => {
     const collectAndProcessPhotos = async () => {
@@ -165,7 +172,7 @@ function App() {
           </div>
         )}
         
-        <div className="messages">
+        <div className="messages" ref={messagesRef}>
           {messages.length === 0 && !isProcessingPhotos && (
             <div className="message assistant">
               <strong>mixtiles</strong>

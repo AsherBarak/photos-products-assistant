@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Annotated, TypedDict
 import os
+import logging
 from dotenv import load_dotenv
 
 # LangChain / LangGraph imports
@@ -13,6 +14,10 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 
 load_dotenv()
+
+LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "server.log")
+logging.basicConfig(filename=LOG_PATH, level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("chat")
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "true").lower() == "true"
 
@@ -119,9 +124,11 @@ Tone: Professional, charming, and witty.
 Context: {summary_context}
 
 Guidelines:
+- ALWAYS use a picker tool when presenting options. NEVER list options as bullet points or numbered lists in your text.
 - If you need the user to pick a time range, use 'show_timeframe_picker'.
 - If you need them to identify a person, use 'show_person_picker'.
-- If you want them to choose between specific ideas you just proposed, use 'show_custom_picker'.
+- For ANY other choice (product types, ideas, next steps), use 'show_custom_picker' with 2-4 options. Labels must be 1-3 words max.
+- Keep your text message brief (1-2 sentences) — let the picker do the work.
 """)
     
     response = llm.invoke([system_msg] + state["messages"])
@@ -259,21 +266,41 @@ async def chat(request: ChatRequest):
         if m.role == "user":
             langchain_messages.append(HumanMessage(content=m.content))
         else:
-            # We'll treat other roles as AI messages for the graph's history
-            from langchain_core.messages import AIMessage
             langchain_messages.append(AIMessage(content=m.content))
 
     # Invoke the graph
+    log.info(f"User: {request.messages[-1].content}")
     try:
         result = await chat_graph.ainvoke({"messages": langchain_messages, "summary": request.summary})
-        
+
         # Get the last message and picker from the result
-        last_message = result["messages"][-1]
         picker = result.get("picker")
-        
-        return ChatResponse(response=last_message.content, picker=picker)
+
+        # Find the last AI message with text content (only from new messages)
+        new_messages = result["messages"][len(langchain_messages):]
+        response_text = ""
+        for msg in reversed(new_messages):
+            if not isinstance(msg, AIMessage):
+                continue
+            # content can be a string or a list of blocks
+            if isinstance(msg.content, str) and msg.content:
+                response_text = msg.content
+                break
+            if isinstance(msg.content, list):
+                for block in msg.content:
+                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                        response_text = block["text"]
+                        break
+                if response_text:
+                    break
+
+        response = ChatResponse(response=response_text, picker=picker)
+        log.info(f"Assistant: {response.response}")
+        if response.picker:
+            log.info(f"Picker: {[o.label for o in response.picker.options]}")
+        return response
     except Exception as e:
-        print(f"Error in chat graph: {e}")
+        log.error(f"Error: {e}")
         return ChatResponse(
             response="I'm having a bit of trouble reaching my brain right now (LLM error). Try typing '12345' to see my debug mode!",
             action="ERROR"

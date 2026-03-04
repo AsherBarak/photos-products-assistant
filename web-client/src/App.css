@@ -238,7 +238,7 @@ body {
   background-color: var(--mixtiles-white);
   border-top: 1px solid var(--mixtiles-gray-medium);
   padding: 1rem;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .picker-container.slide-up {
@@ -252,8 +252,9 @@ body {
 
 .picker-options {
   display: flex;
-  gap: 12px;
-  min-width: max-content;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-start;
 }
 
 .picker-options.text .picker-option {
@@ -264,7 +265,8 @@ body {
   border-radius: 100px;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   transition: transform 0.1s ease;
 }
 
