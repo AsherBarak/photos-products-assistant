@@ -30,6 +30,27 @@ interface PhotoSummary {
   trips: Trip[]
 }
 
+interface Scope {
+  time_range?: { start: string; end: string }
+  trip?: string
+  people?: string[]
+  themes?: string[]
+  product_type?: string
+}
+
+interface EmbeddingReadiness {
+  total: number
+  ready: number
+  in_scope: number
+  in_scope_ready: number
+}
+
+interface DataReadiness {
+  metadata: 'pending' | 'complete'
+  clip_embeddings: EmbeddingReadiness
+  face_embeddings: EmbeddingReadiness
+}
+
 interface PickerOption {
   id: string
   label: string
@@ -40,6 +61,14 @@ interface Picker {
   type: 'text' | 'image'
   options: PickerOption[]
 }
+
+const MOCK_PHOTO_COUNT = 2500
+
+const createInitialDataReadiness = (): DataReadiness => ({
+  metadata: 'pending',
+  clip_embeddings: { total: MOCK_PHOTO_COUNT, ready: 0, in_scope: 0, in_scope_ready: 0 },
+  face_embeddings: { total: MOCK_PHOTO_COUNT, ready: 0, in_scope: 0, in_scope_ready: 0 },
+})
 
 // Mock photos data generator
 const generateMockPhotos = (): PhotoMetadata[] => {
@@ -80,7 +109,10 @@ function App() {
   const [summary, setSummary] = useState<PhotoSummary | null>(null)
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false)
   const [picker, setPicker] = useState<Picker | null>(null)
+  const [scope, setScope] = useState<Scope | null>(null)
+  const [dataReadiness, setDataReadiness] = useState<DataReadiness>(createInitialDataReadiness)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const embeddingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (messagesRef.current) {
@@ -107,6 +139,37 @@ function App() {
         if (!response.ok) throw new Error('Failed to process photos')
         const data = await response.json()
         setSummary(data)
+
+        // Metadata is now complete
+        setDataReadiness(prev => ({ ...prev, metadata: 'complete' }))
+
+        // Simulate embeddings gradually becoming ready
+        const isTest = (window as any).IS_TEST
+        if (isTest) {
+          // In tests, immediately set embeddings to a reasonable state
+          setDataReadiness(prev => ({
+            ...prev,
+            clip_embeddings: { ...prev.clip_embeddings, ready: Math.round(MOCK_PHOTO_COUNT * 0.6) },
+            face_embeddings: { ...prev.face_embeddings, ready: Math.round(MOCK_PHOTO_COUNT * 0.4) },
+          }))
+        } else {
+          // In real usage, simulate gradual embedding processing
+          const interval = setInterval(() => {
+            setDataReadiness(prev => {
+              const clipReady = Math.min(prev.clip_embeddings.total, prev.clip_embeddings.ready + Math.round(MOCK_PHOTO_COUNT * 0.08))
+              const faceReady = Math.min(prev.face_embeddings.total, prev.face_embeddings.ready + Math.round(MOCK_PHOTO_COUNT * 0.05))
+              const clipDone = clipReady >= prev.clip_embeddings.total
+              const faceDone = faceReady >= prev.face_embeddings.total
+              if (clipDone && faceDone) clearInterval(interval)
+              return {
+                ...prev,
+                clip_embeddings: { ...prev.clip_embeddings, ready: clipReady },
+                face_embeddings: { ...prev.face_embeddings, ready: faceReady },
+              }
+            })
+          }, 3000)
+          embeddingTimerRef.current = interval
+        }
       } catch (error) {
         console.error('Error processing photos:', error)
       } finally {
@@ -115,6 +178,31 @@ function App() {
     }
     collectAndProcessPhotos()
   }, [])
+
+  // Cleanup embedding timer on unmount
+  useEffect(() => {
+    return () => {
+      if (embeddingTimerRef.current) clearInterval(embeddingTimerRef.current)
+    }
+  }, [])
+
+  // When scope changes, update in_scope counts proportionally
+  useEffect(() => {
+    setDataReadiness(prev => {
+      // Estimate how many photos are in scope based on scope fields
+      // With no scope, all photos are in scope; with scope, roughly 30-40%
+      const hasScope = scope && Object.keys(scope).some(k => (scope as any)[k] != null)
+      const scopeRatio = hasScope ? 0.34 : 1.0
+      const inScope = Math.round(MOCK_PHOTO_COUNT * scopeRatio)
+      const clipInScopeReady = Math.min(inScope, Math.round(prev.clip_embeddings.ready * scopeRatio))
+      const faceInScopeReady = Math.min(inScope, Math.round(prev.face_embeddings.ready * scopeRatio))
+      return {
+        ...prev,
+        clip_embeddings: { ...prev.clip_embeddings, in_scope: inScope, in_scope_ready: clipInScopeReady },
+        face_embeddings: { ...prev.face_embeddings, in_scope: inScope, in_scope_ready: faceInScopeReady },
+      }
+    })
+  }, [scope])
 
   const sendMessage = async (overrideInput?: string) => {
     const textToSend = typeof overrideInput === 'string' ? overrideInput : input
@@ -133,7 +221,9 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [...messages, userMessage],
-          summary: summary
+          summary: summary,
+          scope: scope,
+          data_readiness: dataReadiness,
         }),
       })
 
@@ -142,9 +232,13 @@ function App() {
       const data = await response.json()
       const assistantMessage: Message = { role: 'assistant', content: data.response }
       setMessages((prev) => [...prev, assistantMessage])
-      
+
       if (data.picker) {
         setPicker(data.picker)
+      }
+
+      if (data.scope) {
+        setScope(data.scope)
       }
     } catch (error) {
       console.error('Error:', error)
