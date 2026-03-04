@@ -76,11 +76,75 @@ Some queries can only be partially answered during this stage:
 
 ---
 
-## State Management Design (To Discuss)
+## Scope — The Shared State Object
 
-### Key questions
-1. **Client state** — How does the client track embedding progress and communicate it to the server? (progress %, which photos are done, current priority window)
-2. **Server state** — Currently stateless (history passed each request). As embeddings stream in, server needs to accumulate per-user data. What store? (in-memory, Redis, DB)
-3. **Priority signaling** — How does the server tell the client "prioritize photos from Jan-Mar 2024"? Push (WebSocket) or pull (client polls)?
-4. **Partial results UX** — How does the LLM know what's available vs. pending? Should it have a "data readiness" summary in its context?
-5. **Session continuity** — If the user leaves and returns, cached embeddings on device mean fast restart. But what about server-side state?
+Scope captures what the user wants for their product. It serves two purposes simultaneously:
+1. **Server/LLM** — filter criteria for selecting photos
+2. **Client** — embedding & upload priority (embed what's in scope first)
+
+Scope is updated by the LLM as the conversation progresses and travels back and forth with each request/response.
+
+### Structure
+
+```json
+{
+  "scope": {
+    "time_range": { "start": "2024-01-01", "end": "2024-01-07" },
+    "trip": "Greece Trip",
+    "people": ["Betty"],
+    "themes": ["sunset", "beach"],
+    "product_type": "photo_album"
+  }
+}
+```
+
+All fields are optional — scope starts empty and fills in as the conversation narrows.
+
+### Flow
+
+```
+Client                          Server (LLM)
+  |                                |
+  |-- ChatRequest { messages,      |
+  |     summary, scope,            |
+  |     data_readiness }           |
+  |------------------------------->|
+  |                                |  LLM sees current scope +
+  |                                |  what data is available
+  |                                |
+  |   ChatResponse { response,     |
+  |     picker, scope }  ----------|
+  |<-------------------------------|
+  |                                |
+  |  Client reads updated scope:   |
+  |  - Prioritizes embedding       |
+  |    photos matching scope       |
+  |  - Continues uploading         |
+  |    embeddings to server        |
+  |                                |
+```
+
+- **LLM updates scope** as part of the chat response (same channel, no extra infra)
+- **Client sends scope back** on the next request so LLM has continuity
+- **Client also sends `data_readiness`** so the LLM knows what queries are possible
+
+### data_readiness (client → server)
+
+```json
+{
+  "data_readiness": {
+    "metadata": "complete",
+    "clip_embeddings": { "total": 12000, "ready": 4500, "in_scope": 850, "in_scope_ready": 720 },
+    "face_embeddings": { "total": 12000, "ready": 3200, "in_scope": 850, "in_scope_ready": 310 }
+  }
+}
+```
+
+This lets the LLM make informed decisions:
+- "I have 85% of in-scope CLIP embeddings, I can suggest sunset photos"
+- "Face embeddings are only 36% in-scope, I should tell the user I'm still identifying people"
+
+### Remaining design questions
+1. **Server-side embedding storage** — as embeddings stream in, where do they accumulate? (in-memory, Redis, vector DB)
+2. **Session continuity** — if the user leaves and returns, device cache means fast restart. What about server-side state?
+3. **Scope conflicts** — user changes direction mid-conversation (e.g., switches from Greece to Tehran). Client needs to re-prioritize. Is the latest scope always the full truth, or do we need a history?
