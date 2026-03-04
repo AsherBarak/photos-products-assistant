@@ -6,3 +6,4 @@ server/.env
 venv/
 node_modules/
 .claude/
+photos-export/

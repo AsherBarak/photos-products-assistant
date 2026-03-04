@@ -1,17 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
+import { usePhotoService } from './PhotoServiceContext'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
-}
-
-interface PhotoMetadata {
-  timestamp: string
-  latitude: number
-  longitude: number
-  exif: Record<string, any>
-  additional_metadata: Record<string, any>
 }
 
 interface ProcessedDay {
@@ -62,49 +55,18 @@ interface Picker {
   options: PickerOption[]
 }
 
-const MOCK_PHOTO_COUNT = 2500
+const EMBED_BATCH_SIZE = 200
 
 const createInitialDataReadiness = (): DataReadiness => ({
   metadata: 'pending',
-  clip_embeddings: { total: MOCK_PHOTO_COUNT, ready: 0, in_scope: 0, in_scope_ready: 0 },
-  face_embeddings: { total: MOCK_PHOTO_COUNT, ready: 0, in_scope: 0, in_scope_ready: 0 },
+  clip_embeddings: { total: 0, ready: 0, in_scope: 0, in_scope_ready: 0 },
+  face_embeddings: { total: 0, ready: 0, in_scope: 0, in_scope_ready: 0 },
 })
-
-// Mock photos data generator
-const generateMockPhotos = (): PhotoMetadata[] => {
-  const photos: PhotoMetadata[] = []
-  const now = new Date()
-  const twoYearsAgo = new Date(now.getTime() - 2 * 365 * 24 * 60 * 60 * 1000)
-  
-  // Locations
-  const LOCATIONS = {
-    TEL_AVIV: { lat: 32.0622, lon: 34.7711 }, // Lilienblum 7
-    TEHRAN: { lat: 35.6892, lon: 51.3890 },
-    GREECE: { lat: 37.9838, lon: 23.7275 }, // Athens
-  }
-
-  for (let i = 0; i < 2500; i++) {
-    const randomTime = new Date(twoYearsAgo.getTime() + Math.random() * (now.getTime() - twoYearsAgo.getTime()))
-    let loc = LOCATIONS.TEL_AVIV
-    
-    // Distribute some trips
-    if (i < 125) loc = LOCATIONS.TEHRAN // 5%
-    else if (i < 250) loc = LOCATIONS.GREECE // 5%
-    
-    photos.push({
-      timestamp: randomTime.toISOString(),
-      latitude: loc.lat + (Math.random() - 0.5) * 0.01,
-      longitude: loc.lon + (Math.random() - 0.5) * 0.01,
-      exif: { "Make": "Apple", "Model": "iPhone" },
-      additional_metadata: {}
-    })
-  }
-  return photos
-}
 
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug')
 
 function App() {
+  const photoService = usePhotoService()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -114,7 +76,6 @@ function App() {
   const [scope, setScope] = useState<Scope | null>(null)
   const [dataReadiness, setDataReadiness] = useState<DataReadiness>(createInitialDataReadiness)
   const messagesRef = useRef<HTMLDivElement>(null)
-  const embeddingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (messagesRef.current) {
@@ -123,79 +84,59 @@ function App() {
   }, [messages, picker])
 
   useEffect(() => {
-    const collectAndProcessPhotos = async () => {
+    const loadPhotosAndEmbed = async () => {
       setIsProcessingPhotos(true)
-      
-      // Simulate data collection stall (zero in tests)
-      const delay = (window as any).IS_TEST ? 0 : 5000
-      await new Promise(resolve => setTimeout(resolve, delay))
-      
-      const mockPhotos = generateMockPhotos()
-      
+
       try {
+        // 1. Fetch all photo metadata
+        const photos = await photoService.fetchAllPhotos()
+        const total = photos.length
+
+        setDataReadiness(prev => ({
+          ...prev,
+          clip_embeddings: { ...prev.clip_embeddings, total },
+          face_embeddings: { ...prev.face_embeddings, total },
+        }))
+
+        // 2. Process photos for summary (server)
         const response = await fetch('http://localhost:8000/process-photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mockPhotos),
+          body: JSON.stringify(photos),
         })
         if (!response.ok) throw new Error('Failed to process photos')
         const data = await response.json()
         setSummary(data)
-
-        // Metadata is now complete
         setDataReadiness(prev => ({ ...prev, metadata: 'complete' }))
 
-        // Simulate embeddings gradually becoming ready
-        const isTest = (window as any).IS_TEST
-        if (isTest) {
-          // In tests, immediately set embeddings to a reasonable state
+        // 3. Fetch embeddings in batches
+        for (let i = 0; i < photos.length; i += EMBED_BATCH_SIZE) {
+          const batch = photos.slice(i, i + EMBED_BATCH_SIZE)
+          await Promise.all(batch.map(p => photoService.fetchEmbedding(p.id)))
+          const ready = Math.min(i + EMBED_BATCH_SIZE, photos.length)
           setDataReadiness(prev => ({
             ...prev,
-            clip_embeddings: { ...prev.clip_embeddings, ready: Math.round(MOCK_PHOTO_COUNT * 0.6) },
-            face_embeddings: { ...prev.face_embeddings, ready: Math.round(MOCK_PHOTO_COUNT * 0.4) },
+            clip_embeddings: { ...prev.clip_embeddings, ready },
+            face_embeddings: { ...prev.face_embeddings, ready },
           }))
-        } else {
-          // In real usage, simulate gradual embedding processing
-          const interval = setInterval(() => {
-            setDataReadiness(prev => {
-              const clipReady = Math.min(prev.clip_embeddings.total, prev.clip_embeddings.ready + Math.round(MOCK_PHOTO_COUNT * 0.08))
-              const faceReady = Math.min(prev.face_embeddings.total, prev.face_embeddings.ready + Math.round(MOCK_PHOTO_COUNT * 0.05))
-              const clipDone = clipReady >= prev.clip_embeddings.total
-              const faceDone = faceReady >= prev.face_embeddings.total
-              if (clipDone && faceDone) clearInterval(interval)
-              return {
-                ...prev,
-                clip_embeddings: { ...prev.clip_embeddings, ready: clipReady },
-                face_embeddings: { ...prev.face_embeddings, ready: faceReady },
-              }
-            })
-          }, 3000)
-          embeddingTimerRef.current = interval
         }
       } catch (error) {
-        console.error('Error processing photos:', error)
+        console.error('Error loading photos:', error)
       } finally {
         setIsProcessingPhotos(false)
       }
     }
-    collectAndProcessPhotos()
-  }, [])
-
-  // Cleanup embedding timer on unmount
-  useEffect(() => {
-    return () => {
-      if (embeddingTimerRef.current) clearInterval(embeddingTimerRef.current)
-    }
-  }, [])
+    loadPhotosAndEmbed()
+  }, [photoService])
 
   // When scope changes, update in_scope counts proportionally
   useEffect(() => {
     setDataReadiness(prev => {
-      // Estimate how many photos are in scope based on scope fields
-      // With no scope, all photos are in scope; with scope, roughly 30-40%
+      const total = prev.clip_embeddings.total
+      if (total === 0) return prev
       const hasScope = scope && Object.keys(scope).some(k => (scope as any)[k] != null)
       const scopeRatio = hasScope ? 0.34 : 1.0
-      const inScope = Math.round(MOCK_PHOTO_COUNT * scopeRatio)
+      const inScope = Math.round(total * scopeRatio)
       const clipInScopeReady = Math.min(inScope, Math.round(prev.clip_embeddings.ready * scopeRatio))
       const faceInScopeReady = Math.min(inScope, Math.round(prev.face_embeddings.ready * scopeRatio))
       return {

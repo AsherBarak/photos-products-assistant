@@ -1,13 +1,33 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import { vi } from 'vitest'
+import { PhotoServiceContext } from './PhotoServiceContext'
+import type { PhotoService } from './photoService'
+
+const mockPhotos = [
+  { id: 'p1', timestamp: '2024-01-01T00:00:00', latitude: 32.06, longitude: 34.77, exif: {}, additional_metadata: {} },
+  { id: 'p2', timestamp: '2024-01-02T00:00:00', latitude: 32.06, longitude: 34.77, exif: {}, additional_metadata: {} },
+]
+
+const mockService: PhotoService = {
+  fetchAllPhotos: vi.fn().mockResolvedValue(mockPhotos),
+  fetchEmbedding: vi.fn().mockResolvedValue({
+    photo_id: 'p1', clip_embedding: [], face_embedding: [], faces_detected: 0,
+  }),
+}
+
+function renderApp() {
+  return render(
+    <PhotoServiceContext.Provider value={mockService}>
+      <App />
+    </PhotoServiceContext.Provider>
+  )
+}
 
 describe('App', () => {
   beforeEach(() => {
-    (window as any).IS_TEST = true
     let chatCallCount = 0
-    // Mock both endpoints
-    global.fetch = vi.fn().mockImplementation((url) => {
+    global.fetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes('/process-photos')) {
         return Promise.resolve({
           ok: true,
@@ -37,7 +57,7 @@ describe('App', () => {
   })
 
   it('renders chat interface and handles background processing', async () => {
-    render(<App />)
+    renderApp()
 
     // Processing should finish quickly in test
     await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
@@ -46,7 +66,7 @@ describe('App', () => {
   })
 
   it('allows user to send messages and see pickers', async () => {
-    render(<App />)
+    renderApp()
 
     await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
 
@@ -72,7 +92,7 @@ describe('App', () => {
   })
 
   it('sends scope and data_readiness in chat request and updates scope from response', async () => {
-    render(<App />)
+    renderApp()
 
     await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
 
@@ -96,7 +116,7 @@ describe('App', () => {
     expect(firstChatBody.data_readiness).toHaveProperty('metadata', 'complete')
     expect(firstChatBody.data_readiness).toHaveProperty('clip_embeddings')
     expect(firstChatBody.data_readiness).toHaveProperty('face_embeddings')
-    expect(firstChatBody.data_readiness.clip_embeddings.total).toBe(2500)
+    expect(firstChatBody.data_readiness.clip_embeddings.total).toBe(mockPhotos.length)
 
     // Now send a second message — the scope from the first response should be sent back
     fireEvent.change(input, { target: { value: 'What about sunsets?' } })
@@ -124,9 +144,9 @@ describe('App', () => {
   })
 
   it('works when server returns no scope (backward compatible)', async () => {
-    // Override fetch to return no scope
+    // Override fetch to return no scope/picker from chat
     let chatCallCount = 0
-    global.fetch = vi.fn().mockImplementation((url) => {
+    global.fetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes('/process-photos')) {
         return Promise.resolve({
           ok: true,
@@ -135,7 +155,6 @@ describe('App', () => {
       }
       if (url.includes('/chat')) {
         chatCallCount++
-        // No scope or picker in response
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ response: 'Hello there' })
@@ -144,7 +163,7 @@ describe('App', () => {
       return Promise.reject(new Error('Unknown URL'))
     })
 
-    render(<App />)
+    renderApp()
 
     await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
 
