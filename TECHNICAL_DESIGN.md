@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 The system follows a Client-Server architecture:
-- **Server:** FastAPI (Python) using LangGraph for conversation management and Gemini (Google) for LLM reasoning.
+- **Server:** FastAPI (Python) using LangGraph for conversation management and Claude (Anthropic) for LLM reasoning.
 - **Client:** React (TypeScript) for the web prototype, simulating background photo metadata collection.
 
 ## API Contracts

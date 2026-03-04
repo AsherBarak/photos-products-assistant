@@ -13,7 +13,7 @@ async def test_process_photos():
     }
     
     with patch("main.DEBUG_MODE", False):
-        with patch("langchain_google_genai.chat_models.ChatGoogleGenerativeAI.ainvoke", return_value=AIMessage(content=f"```json\n{json.dumps(mock_json)}\n```")):
+        with patch("langchain_anthropic.chat_models.ChatAnthropic.ainvoke", return_value=AIMessage(content=f"```json\n{json.dumps(mock_json)}\n```")):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 payload = [

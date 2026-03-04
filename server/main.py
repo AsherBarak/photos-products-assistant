@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # LangChain / LangGraph imports
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
@@ -100,13 +100,10 @@ tools = [show_timeframe_picker, show_person_picker, show_custom_picker]
 tool_node = ToolNode(tools)
 
 # Initialize LLM
-# If GOOGLE_API_KEY is not found, we'll use a placeholder for local development/tests
-api_key = os.getenv("GOOGLE_API_KEY") or "mock-key-for-tests"
-llm = ChatGoogleGenerativeAI(
-    model="gemini-flash-latest", 
-    temperature=0.7, 
-    google_api_key=api_key,
-    max_retries=1 # Fail fast if quota is hit
+llm = ChatAnthropic(
+    model="claude-sonnet-4-20250514",
+    temperature=0.7,
+    max_retries=1,
 ).bind_tools(tools)
 
 def chatbot(state: State):
@@ -164,7 +161,7 @@ workflow.add_node("process_picker", handle_tool_outputs)
 workflow.set_entry_point("chatbot")
 workflow.add_conditional_edges("chatbot", post_tool_routing, {"tools": "tools", END: END})
 workflow.add_edge("tools", "process_picker")
-workflow.add_edge("process_picker", END)
+workflow.add_edge("process_picker", "chatbot")
 
 chat_graph = workflow.compile()
 
