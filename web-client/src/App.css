@@ -35,22 +35,44 @@ body {
 }
 
 .logo {
-  font-weight: 800;
-  font-size: 1.6rem;
-  letter-spacing: -1.2px;
-  color: var(--mixtiles-pink);
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.2rem;
+  color: #222;
   display: flex;
   align-items: center;
-  gap: 8px;
-  text-transform: lowercase;
+  gap: 12px;
+  text-transform: uppercase;
 }
 
 .logo-icon {
-  width: 20px;
-  height: 20px;
+  width: 12px;
+  height: 12px;
   background-color: var(--mixtiles-pink);
-  border-radius: 3px;
-  box-shadow: 2px 2px 0 var(--mixtiles-gray-medium);
+  transform: rotate(-45deg);
+  position: relative;
+  margin-right: 6px;
+  margin-top: 1px;
+}
+
+.logo-icon::before,
+.logo-icon::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background-color: var(--mixtiles-pink);
+  border-radius: 50%;
+  position: absolute;
+}
+
+.logo-icon::before {
+  top: -6px;
+  left: 0;
+}
+
+.logo-icon::after {
+  left: 6px;
+  top: 0;
 }
 
 .chat-container {
@@ -62,22 +84,23 @@ body {
   overflow: hidden;
 }
 
-.processing-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, 0.95);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  z-index: 100;
+.background-processing {
+  padding: 0.5rem 1rem;
+  background-color: var(--mixtiles-gray-medium);
+  color: var(--mixtiles-black);
+  font-size: 0.8rem;
   font-weight: 600;
-  font-size: 1.1rem;
-  color: var(--mixtiles-pink);
-  gap: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--mixtiles-gray-medium);
+}
+
+.spinner.small {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .spinner {
@@ -208,4 +231,77 @@ body {
   background-color: var(--mixtiles-gray-medium);
   cursor: not-allowed;
   transform: none;
+}
+
+/* Picker Styles */
+.picker-container {
+  background-color: var(--mixtiles-white);
+  border-top: 1px solid var(--mixtiles-gray-medium);
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.picker-container.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.picker-options {
+  display: flex;
+  gap: 12px;
+  min-width: max-content;
+}
+
+.picker-options.text .picker-option {
+  padding: 0.75rem 1.5rem;
+  background-color: var(--mixtiles-pink);
+  color: white;
+  border: none;
+  border-radius: 100px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.1s ease;
+}
+
+.picker-options.image .picker-option {
+  background: none;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.picker-options.image .picker-option img {
+  width: 80px;
+  height: 80px;
+  object-fit: crop;
+  border-radius: 8px;
+  box-shadow: var(--mixtiles-shadow);
+  transition: transform 0.1s ease;
+}
+
+.picker-options.text .picker-option span {
+  color: white;
+}
+
+.picker-options.image .picker-option span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--mixtiles-black);
+}
+
+.picker-option:hover {
+  transform: scale(1.05);
+}
+
+.picker-option:active {
+  transform: scale(0.95);
 }

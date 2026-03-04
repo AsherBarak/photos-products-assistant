@@ -1,26 +1,76 @@
 import pytest
+import json
 from httpx import AsyncClient, ASGITransport
 from main import app
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage
 
 @pytest.mark.asyncio
-async def test_read_root():
+async def test_process_photos():
+    mock_json = {
+        "important_days": [{"date": "2024-03-01", "count": 2}],
+        "trips": [{"start_date": "2024-02-15", "end_date": "2024-02-15", "title": "London Trip"}]
+    }
+    
+    with patch("main.DEBUG_MODE", False):
+        with patch("langchain_google_genai.chat_models.ChatGoogleGenerativeAI.ainvoke", return_value=AIMessage(content=f"```json\n{json.dumps(mock_json)}\n```")):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                payload = [
+                    {
+                        "timestamp": "2024-03-01T12:00:00",
+                        "latitude": 32.0853,
+                        "longitude": 34.7818,
+                        "exif": {},
+                        "additional_metadata": {}
+                    }
+                ]
+                response = await ac.post("/process-photos", json=payload)
+                assert response.status_code == 200
+                data = response.json()
+                assert "important_days" in data
+                assert len(data["trips"]) == 1
+                assert data["trips"][0]["title"] == "London Trip"
+
+@pytest.mark.asyncio
+async def test_chat_debug_bypass():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        response = await ac.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "Photos Products Assistant API"}
+        payload = {
+            "messages": [{"role": "user", "content": "12345"}],
+            "summary": None
+        }
+        response = await ac.post("/chat", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert "[DEBUG]" in data["response"]
+        assert data["picker"] is not None
+        assert data["picker"]["options"][0]["label"] == "Last 6 Months"
 
 @pytest.mark.asyncio
 async def test_chat_langgraph_response():
-    # Mock the graph invocation
-    mock_result = {"messages": [AIMessage(content="Hello! I'm your assistant. What photo products are you looking for today? Also, your greeting was very human.")]}
+    # Mock the graph invocation to return a result with a picker
+    mock_result = {
+        "messages": [AIMessage(content="I see your photos! Which timeframe should we use?")],
+        "picker": {
+            "type": "text",
+            "options": [{"id": "t1", "label": "Last Year"}]
+        }
+    }
     
     with patch("main.chat_graph.ainvoke", return_value=mock_result):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.post("/chat", json=[{"role": "user", "content": "Hello"}])
+            payload = {
+                "messages": [{"role": "user", "content": "I want an album"}],
+                "summary": {
+                    "important_days": [],
+                    "trips": []
+                }
+            }
+            response = await ac.post("/chat", json=payload)
             assert response.status_code == 200
-            assert "response" in response.json()
-            assert "What photo products" in response.json()["response"]
+            data = response.json()
+            assert "timeframe" in data["response"]
+            assert data["picker"]["type"] == "text"
+            assert data["picker"]["options"][0]["label"] == "Last Year"

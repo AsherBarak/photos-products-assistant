@@ -1,22 +1,40 @@
-# Technical Design: Photos Products Assistant (Root)
+# Mixtiles Assistant - Technical Design
 
-## Responsibility
-This project is an assistant that enables users to create products (photo albums, photo walls, and videos) from their iPhone photo gallery through a conversational interface.
+## Architecture Overview
+The system follows a Client-Server architecture:
+- **Server:** FastAPI (Python) using LangGraph for conversation management and Gemini (Google) for LLM reasoning.
+- **Client:** React (TypeScript) for the web prototype, simulating background photo metadata collection.
 
-## Project Structure
-- **/server:** Backend for conversation processing (LLM-based), product generation logic, and asset management.
-- **/swift-client:** iOS application for user interaction, gallery access, and product visualization.
-- **/web-client:** Web interface for interacting with the system during development.
+## API Contracts
 
-## Public API / Communication
-- **Client (Swift/Web):** Communication via [TBD: REST/WebSocket] to the server.
-- **Server (Python):** Exposes an API for conversation management and product generation.
+### 1. Photo Processing
+`POST /process-photos`
+- **Request:** List of raw `PhotoMetadata` (Timestamp, Geolocation, EXIF).
+- **Response:** `PhotoSummary` containing identified `trips` and `important_days`.
+- **Note:** Server pre-aggregates data to minimize token costs and avoid LLM quota limits.
 
-## State/Data
-- **Client-side:** User's local photo metadata, current conversation state, and cached generated assets.
-- **Server-side:** Conversation history, user preferences, and temporary storage for generated product metadata/assets.
+### 2. Chat
+`POST /chat`
+- **Request:**
+    - `messages`: List of previous chat messages.
+    - `summary`: Optional `PhotoSummary` (provided once background processing is complete).
+- **Response:**
+    - `response`: Text message for the user.
+    - `picker`: Optional UI instruction to show a selection interface.
+        - `type`: "text" or "image".
+        - `options`: List of `{id, label, image_url}`.
 
-## Dependencies
-- **Swift (Client):** iOS SDK.
-- **Python (Server):** LLM integration (e.g., OpenAI), [TBD: FastAPI/Flask, Image/Video processing libraries].
-- **Web (Client):** [TBD: React/TypeScript/Angular].
+## State Management
+- **Server:** Stateless endpoints. LangGraph maintains state within the request chain. History is currently passed from the client in each request.
+- **Client:** React `useState` for chat history, `summary` object, and picker visibility.
+
+## UI/UX Components (Web)
+- **Background Worker:** A simulated `useEffect` that waits 5s, generates 2500 mock photos, and calls `/process-photos`.
+- **Chat Interface:** Mixtiles-branded (Pink #FF3B6B, Manrope font).
+- **Picker Component:** Animated container that slides up above the input field when `picker` is present in the server response.
+
+## Development Standards
+- **TDD:** 
+    - Server: `pytest` with `httpx` and `unittest.mock`.
+    - Client: `vitest` with `React Testing Library`.
+- **Environment:** Secrets managed via `.env` (ignored by git).

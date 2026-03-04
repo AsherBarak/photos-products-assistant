@@ -30,45 +30,72 @@ interface PhotoSummary {
   trips: Trip[]
 }
 
-// Mock photos data from the "phone"
-const MOCK_PHOTOS: PhotoMetadata[] = [
-  {
-    timestamp: "2024-03-01T12:00:00",
-    latitude: 32.0853,
-    longitude: 34.7818, // Tel Aviv
-    exif: { "Make": "Apple", "Model": "iPhone 15", "TIFF": "..." },
-    additional_metadata: { "category": "nature" }
-  },
-  {
-    timestamp: "2024-03-01T15:00:00",
-    latitude: 32.0853,
-    longitude: 34.7818,
-    exif: { "Make": "Apple" },
-    additional_metadata: {}
-  },
-  {
-    timestamp: "2024-02-15T18:30:00",
-    latitude: 51.5074,
-    longitude: -0.1278, // London
-    exif: { "Make": "Canon", "Model": "EOS R5", "TIFF": "..." },
-    additional_metadata: { "category": "travel" }
+interface PickerOption {
+  id: string
+  label: string
+  image_url?: string
+}
+
+interface Picker {
+  type: 'text' | 'image'
+  options: PickerOption[]
+}
+
+// Mock photos data generator
+const generateMockPhotos = (): PhotoMetadata[] => {
+  const photos: PhotoMetadata[] = []
+  const now = new Date()
+  const twoYearsAgo = new Date(now.getTime() - 2 * 365 * 24 * 60 * 60 * 1000)
+  
+  // Locations
+  const LOCATIONS = {
+    TEL_AVIV: { lat: 32.0622, lon: 34.7711 }, // Lilienblum 7
+    TEHRAN: { lat: 35.6892, lon: 51.3890 },
+    GREECE: { lat: 37.9838, lon: 23.7275 }, // Athens
   }
-]
+
+  for (let i = 0; i < 2500; i++) {
+    const randomTime = new Date(twoYearsAgo.getTime() + Math.random() * (now.getTime() - twoYearsAgo.getTime()))
+    let loc = LOCATIONS.TEL_AVIV
+    
+    // Distribute some trips
+    if (i < 125) loc = LOCATIONS.TEHRAN // 5%
+    else if (i < 250) loc = LOCATIONS.GREECE // 5%
+    
+    photos.push({
+      timestamp: randomTime.toISOString(),
+      latitude: loc.lat + (Math.random() - 0.5) * 0.01,
+      longitude: loc.lon + (Math.random() - 0.5) * 0.01,
+      exif: { "Make": "Apple", "Model": "iPhone" },
+      additional_metadata: {}
+    })
+  }
+  return photos
+}
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [summary, setSummary] = useState<PhotoSummary | null>(null)
-  const [isProcessingPhotos, setIsProcessingPhotos] = useState(true)
+  const [isProcessingPhotos, setIsProcessingPhotos] = useState(false)
+  const [picker, setPicker] = useState<Picker | null>(null)
 
   useEffect(() => {
-    const processPhotos = async () => {
+    const collectAndProcessPhotos = async () => {
+      setIsProcessingPhotos(true)
+      
+      // Simulate data collection stall (zero in tests)
+      const delay = (window as any).IS_TEST ? 0 : 5000
+      await new Promise(resolve => setTimeout(resolve, delay))
+      
+      const mockPhotos = generateMockPhotos()
+      
       try {
         const response = await fetch('http://localhost:8000/process-photos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(MOCK_PHOTOS),
+          body: JSON.stringify(mockPhotos),
         })
         if (!response.ok) throw new Error('Failed to process photos')
         const data = await response.json()
@@ -79,17 +106,20 @@ function App() {
         setIsProcessingPhotos(false)
       }
     }
-    processPhotos()
+    collectAndProcessPhotos()
   }, [])
 
-  const sendMessage = async () => {
-    if (!input.trim()) return
+  const sendMessage = async (overrideInput?: string) => {
+    const textToSend = typeof overrideInput === 'string' ? overrideInput : input
+    if (!textToSend || !textToSend.trim()) return
 
-    const userMessage: Message = { role: 'user', content: input }
+    const userMessage: Message = { role: 'user', content: textToSend.trim() }
     setMessages((prev) => [...prev, userMessage])
     setInput('')
+    setPicker(null) // Slide down on send
     setIsLoading(true)
 
+    console.log('Sending message:', textToSend)
     try {
       const response = await fetch('http://localhost:8000/chat', {
         method: 'POST',
@@ -105,6 +135,10 @@ function App() {
       const data = await response.json()
       const assistantMessage: Message = { role: 'assistant', content: data.response }
       setMessages((prev) => [...prev, assistantMessage])
+      
+      if (data.picker) {
+        setPicker(data.picker)
+      }
     } catch (error) {
       console.error('Error:', error)
       const errorMessage: Message = { role: 'assistant', content: 'Sorry, I am having trouble connecting to the server.' }
@@ -119,15 +153,15 @@ function App() {
       <header className="app-header">
         <div className="logo">
           <div className="logo-icon"></div>
-          mixtiles
+          MIXTILES
         </div>
       </header>
 
       <div className="chat-container">
         {isProcessingPhotos && (
-          <div className="processing-overlay">
-            <div className="spinner"></div>
-            Analyzing your photos...
+          <div className="background-processing">
+            <div className="spinner small"></div>
+            Analyzing your photos in the background...
           </div>
         )}
         
@@ -156,6 +190,23 @@ function App() {
           )}
         </div>
 
+        {picker && (
+          <div className="picker-container slide-up">
+            <div className={`picker-options ${picker.type}`}>
+              {picker.options.map((option) => (
+                <button 
+                  key={option.id} 
+                  className="picker-option"
+                  onClick={() => sendMessage(option.label)}
+                >
+                  {option.image_url && <img src={option.image_url} alt={option.label} />}
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="input-area">
           <input
             type="text"
@@ -163,9 +214,8 @@ function App() {
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
             placeholder="Tell me about your photos..."
-            disabled={isProcessingPhotos}
           />
-          <button onClick={sendMessage} disabled={isLoading || isProcessingPhotos}>
+          <button onClick={sendMessage} disabled={isLoading}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
