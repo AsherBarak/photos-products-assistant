@@ -31,7 +31,7 @@ interface PhotoSummary {
 }
 
 interface Scope {
-  time_range?: { start: string; end: string }
+  time_range?: { start_date: string; end_date: string }
   trip?: string
   people?: string[]
   themes?: string[]
@@ -101,6 +101,8 @@ const generateMockPhotos = (): PhotoMetadata[] => {
   }
   return photos
 }
+
+const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug')
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -257,6 +259,19 @@ function App() {
           MIXTILES
         </div>
       </header>
+
+      {DEBUG_MODE && (
+          <div className="debug-overlay">
+            <strong>scope</strong>
+            <pre>{scope ? JSON.stringify(scope, null, 2) : 'null'}</pre>
+            <strong>readiness</strong>
+            <pre>{JSON.stringify({
+              meta: dataReadiness.metadata,
+              clip: `${dataReadiness.clip_embeddings.ready}/${dataReadiness.clip_embeddings.total}`,
+              face: `${dataReadiness.face_embeddings.ready}/${dataReadiness.face_embeddings.total}`,
+            }, null, 2)}</pre>
+          </div>
+        )}
 
       <div className="chat-container">
         {isProcessingPhotos && (

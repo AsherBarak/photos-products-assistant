@@ -1,7 +1,8 @@
 import pytest
 import json
 from httpx import AsyncClient, ASGITransport
-from main import app, Scope
+from main import app
+from models import Scope
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -87,7 +88,7 @@ async def test_chat_returns_scope():
     mock_scope = Scope(
         trip="Greece Trip",
         product_type="photo_album",
-        time_range={"start": "2024-01-01", "end": "2024-01-07"}
+        time_range={"start_date": "2024-01-01", "end_date": "2024-01-07"}
     )
     mock_result = {
         "messages": [
@@ -120,8 +121,8 @@ async def test_chat_returns_scope():
             assert data["scope"] is not None
             assert data["scope"]["trip"] == "Greece Trip"
             assert data["scope"]["product_type"] == "photo_album"
-            assert data["scope"]["time_range"]["start"] == "2024-01-01"
-            assert data["scope"]["time_range"]["end"] == "2024-01-07"
+            assert data["scope"]["time_range"]["start_date"] == "2024-01-01"
+            assert data["scope"]["time_range"]["end_date"] == "2024-01-07"
 
 @pytest.mark.asyncio
 async def test_chat_without_scope_backward_compatible():

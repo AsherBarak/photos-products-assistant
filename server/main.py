@@ -1,19 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Annotated, TypedDict
+from typing import List
 import os
 import logging
-from dotenv import load_dotenv
+from collections import Counter
 
-# LangChain / LangGraph imports
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage, ToolMessage
-from langgraph.graph import StateGraph, END
-from langchain_core.tools import tool
-from langgraph.prebuilt import ToolNode
+from models import (
+    PhotoMetadata, ProcessedDay, PhotoSummary,
+    Picker, PickerOption,
+    Scope,
+    ChatRequest, ChatResponse,
+)
+from graph import chat_graph, llm
 
-load_dotenv()
+from langchain_core.messages import HumanMessage, AIMessage
 
 LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "server.log")
 logging.basicConfig(filename=LOG_PATH, level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
@@ -32,213 +32,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# LangGraph State Definition
-class PhotoMetadata(BaseModel):
-    timestamp: str
-    latitude: float
-    longitude: float
-    exif: dict
-    additional_metadata: dict
-
-class ProcessedDay(BaseModel):
-    date: str
-    count: int
-
-class Trip(BaseModel):
-    start_date: str
-    end_date: str
-    title: str
-
-class PhotoSummary(BaseModel):
-    important_days: List[ProcessedDay]
-    trips: List[Trip]
-
-class PickerOption(BaseModel):
-    id: str
-    label: str
-    image_url: Optional[str] = None
-
-class Picker(BaseModel):
-    type: str # "text" or "image"
-    options: List[PickerOption]
-
-class Scope(BaseModel):
-    time_range: Optional[dict] = None   # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
-    trip: Optional[str] = None
-    people: Optional[List[str]] = None
-    themes: Optional[List[str]] = None
-    product_type: Optional[str] = None
-
-class EmbeddingReadiness(BaseModel):
-    total: int
-    ready: int
-    in_scope: int
-    in_scope_ready: int
-
-class DataReadiness(BaseModel):
-    metadata: str  # "pending" | "complete"
-    clip_embeddings: EmbeddingReadiness
-    face_embeddings: EmbeddingReadiness
-
-class State(TypedDict):
-    messages: Annotated[List[BaseMessage], lambda x, y: x + y]
-    summary: Optional[PhotoSummary]
-    picker: Optional[Picker]
-    scope: Optional[Scope]
-    data_readiness: Optional[DataReadiness]
-
-# --- Tools Definition ---
-
-@tool
-def show_timeframe_picker():
-    """Show a UI picker to help the user select a timeframe (Last Year, Last 3 Years, etc.) for their photo product."""
-    return {
-        "type": "text",
-        "options": [
-            {"id": "last_year", "label": "Last Year"},
-            {"id": "last_3_years", "label": "Last 3 Years"},
-            {"id": "way_back", "label": "Way Back"}
-        ]
-    }
-
-@tool
-def show_person_picker():
-    """Show a UI picker with faces of people frequently appearing in the user's photos so they can identify someone."""
-    return {
-        "type": "image",
-        "options": [
-            {"id": "p1", "label": "Betty", "image_url": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop"},
-            {"id": "p2", "label": "John", "image_url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop"},
-            {"id": "p3", "label": "Unknown", "image_url": "https://via.placeholder.com/150?text=?"}
-        ]
-    }
-
-@tool
-def show_custom_picker(options: List[str]):
-    """Show a UI picker with custom text options provided by the assistant. Use this when you want the user to choose between specific ideas you've discussed."""
-    return {
-        "type": "text",
-        "options": [{"id": f"opt_{i}", "label": opt} for i, opt in enumerate(options)]
-    }
-
-@tool
-def update_scope(
-    time_range: Optional[dict] = None,
-    trip: Optional[str] = None,
-    people: Optional[List[str]] = None,
-    themes: Optional[List[str]] = None,
-    product_type: Optional[str] = None
-):
-    """Update the product scope based on what the user wants. Call this whenever the conversation
-    narrows or changes what photos should be included in the product. Only include fields that
-    have been established in the conversation."""
-    return {k: v for k, v in locals().items() if v is not None}
-
-tools = [show_timeframe_picker, show_person_picker, show_custom_picker, update_scope]
-tool_node = ToolNode(tools)
-
-# Initialize LLM
-llm = ChatAnthropic(
-    model="claude-sonnet-4-20250514",
-    temperature=0.7,
-    max_retries=1,
-).bind_tools(tools)
-
-def chatbot(state: State):
-    summary_context = ""
-    if state.get("summary"):
-        summary_context = f"\n\nUser's Photo Summary: {state['summary']}"
-    else:
-        summary_context = "\n\nNOTE: The user's photo metadata is still being analyzed. Focus on general ideas."
-
-    scope_context = ""
-    if state.get("scope"):
-        scope_context = f"\n\nCurrent Scope (what's been established so far): {state['scope'].model_dump_json()}"
-
-    data_readiness_context = ""
-    if state.get("data_readiness"):
-        dr = state["data_readiness"]
-        data_readiness_context = f"\n\nData Readiness (what data is available on the server):\n- Metadata: {dr.metadata}\n- CLIP embeddings: {dr.clip_embeddings.in_scope_ready}/{dr.clip_embeddings.in_scope} in-scope ready ({dr.clip_embeddings.ready}/{dr.clip_embeddings.total} total)\n- Face embeddings: {dr.face_embeddings.in_scope_ready}/{dr.face_embeddings.in_scope} in-scope ready ({dr.face_embeddings.ready}/{dr.face_embeddings.total} total)"
-
-    system_msg = SystemMessage(content=f"""You are a Photos Products Assistant for Mixtiles.
-Goal: Help users create photo products (albums, prints, etc.).
-Tone: Professional, charming, and witty.
-Context: {summary_context}{scope_context}{data_readiness_context}
-
-Guidelines:
-- ALWAYS use a picker tool when presenting options. NEVER list options as bullet points or numbered lists in your text.
-- If you need the user to pick a time range, use 'show_timeframe_picker'.
-- If you need them to identify a person, use 'show_person_picker'.
-- For ANY other choice (product types, ideas, next steps), use 'show_custom_picker' with 2-4 options. Labels must be 1-3 words max.
-- Keep your text message brief (1-2 sentences) — let the picker do the work.
-- ALWAYS call 'update_scope' whenever the conversation establishes or changes scope — including time range, trip, people, themes, or product type. Call it alongside any picker tool if the user's choice narrows scope.
-- If data_readiness shows embeddings are still processing, let the user know gracefully when relevant (e.g. "I'm still identifying people in your photos").
-""")
-    
-    response = llm.invoke([system_msg] + state["messages"])
-    return {"messages": [response]}
-
-def post_tool_routing(state: State):
-    last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        return "tools"
-    return END
-
-def handle_tool_outputs(state: State):
-    import json
-    # Extract picker and scope info from tool messages in the state
-    picker = None
-    scope = state.get("scope")
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, ToolMessage):
-            try:
-                # The tool output is a stringified dict
-                res = json.loads(msg.content.replace("'", "\""))
-                if isinstance(res, dict):
-                    if "options" in res:
-                        # This is a picker tool output
-                        picker = Picker(
-                            type=res["type"],
-                            options=[PickerOption(**opt) for opt in res["options"]]
-                        )
-                    elif msg.name == "update_scope":
-                        # This is a scope update — merge with existing scope
-                        existing = scope.model_dump() if scope else {}
-                        existing.update(res)
-                        scope = Scope(**existing)
-            except:
-                continue
-    return {"picker": picker, "scope": scope}
-
-# Build the Graph
-workflow = StateGraph(State)
-workflow.add_node("chatbot", chatbot)
-workflow.add_node("tools", tool_node)
-workflow.add_node("process_picker", handle_tool_outputs)
-
-workflow.set_entry_point("chatbot")
-workflow.add_conditional_edges("chatbot", post_tool_routing, {"tools": "tools", END: END})
-workflow.add_edge("tools", "process_picker")
-workflow.add_edge("process_picker", "chatbot")
-
-chat_graph = workflow.compile()
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
-    summary: Optional[PhotoSummary] = None
-    scope: Optional[Scope] = None
-    data_readiness: Optional[DataReadiness] = None
-
-class ChatResponse(BaseModel):
-    response: str
-    action: Optional[str] = None
-    picker: Optional[Picker] = None
-    scope: Optional[Scope] = None
-
 @app.get("/")
 def read_root():
     return {"message": "Photos Products Assistant API"}
@@ -246,12 +39,11 @@ def read_root():
 @app.post("/process-photos", response_model=PhotoSummary)
 async def process_photos(photos: List[PhotoMetadata]):
     # Programmatic pre-processing
-    from collections import Counter
     day_counts = Counter()
     for p in photos:
         date_str = p.timestamp.split("T")[0]
         day_counts[date_str] += 1
-    
+
     important_days = [ProcessedDay(date=d, count=c) for d, c in day_counts.items()]
     important_days.sort(key=lambda x: x.date, reverse=True)
 
@@ -259,36 +51,36 @@ async def process_photos(photos: List[PhotoMetadata]):
         return PhotoSummary(
             important_days=important_days[:30],
             trips=[
-                Trip(start_date="2024-01-01", end_date="2024-01-07", title="[DEBUG] Greece Trip"),
-                Trip(start_date="2023-05-10", end_date="2023-05-15", title="[DEBUG] Tehran Trip")
+                {"start_date": "2024-01-01", "end_date": "2024-01-07", "title": "[DEBUG] Greece Trip"},
+                {"start_date": "2023-05-10", "end_date": "2023-05-15", "title": "[DEBUG] Tehran Trip"}
             ]
         )
-    
+
     prompt = f"""
     Analyze the following photo aggregation data.
     Identify significant clusters of photos that likely represent 'trips'.
     Return a JSON summary.
 
-    Data (Date and Photo Count): {[{'date': d.date, 'count': d.count} for d in important_days[:50]]} 
+    Data (Date and Photo Count): {[{'date': d.date, 'count': d.count} for d in important_days[:50]]}
 
     Output Format (JSON):
     {{
         "trips": [ {{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "title": "Trip Title"}}, ... ]
     }}
     """
-    
+
     try:
         response = await llm.ainvoke(prompt)
         content = response.content
-        
+
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
             content = content.split("```")[1].split("```")[0]
-        
+
         import json
         data = json.loads(content.strip())
-        
+
         return PhotoSummary(
             important_days=important_days[:30],
             trips=data.get("trips", [])

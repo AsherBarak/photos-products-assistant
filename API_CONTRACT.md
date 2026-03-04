@@ -8,7 +8,7 @@ All fields optional. Starts empty, fills in as conversation narrows.
 ```typescript
 // Client type
 interface Scope {
-  time_range?: { start: string; end: string }  // ISO dates
+  time_range?: { start_date: string; end_date: string }  // YYYY-MM-DD
   trip?: string                                  // trip name
   people?: string[]                              // person names
   themes?: string[]                              // e.g. "sunset", "beach"
@@ -17,9 +17,13 @@ interface Scope {
 ```
 
 ```python
-# Server Pydantic model
+# Server Pydantic models
+class TimeRange(BaseModel):
+    start_date: str  # YYYY-MM-DD
+    end_date: str    # YYYY-MM-DD
+
 class Scope(BaseModel):
-    time_range: Optional[dict] = None   # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
+    time_range: Optional[TimeRange] = None
     trip: Optional[str] = None
     people: Optional[List[str]] = None
     themes: Optional[List[str]] = None
@@ -82,7 +86,7 @@ class DataReadiness(BaseModel):
 {
   "response": "Great choice! Let's focus on your Greece trip...",
   "picker": { "type": "text", "options": [...] },
-  "scope": { "trip": "Greece Trip", "product_type": "photo_album", "time_range": {"start": "2024-01-01", "end": "2024-01-07"} }
+  "scope": { "trip": "Greece Trip", "product_type": "photo_album", "time_range": {"start_date": "2024-01-01", "end_date": "2024-01-07"} }
 }
 ```
 
@@ -93,7 +97,7 @@ The LLM updates scope via an `update_scope` tool:
 ```python
 @tool
 def update_scope(
-    time_range: Optional[dict] = None,
+    time_range: Optional[dict] = None,  # {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}
     trip: Optional[str] = None,
     people: Optional[List[str]] = None,
     themes: Optional[List[str]] = None,
