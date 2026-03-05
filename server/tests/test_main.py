@@ -1,7 +1,7 @@
 import pytest
 import json
 from httpx import AsyncClient, ASGITransport
-from main import app
+from main import app, embedding_store
 from models import Scope
 from unittest.mock import patch, MagicMock
 from langchain_core.messages import AIMessage, HumanMessage
@@ -123,6 +123,61 @@ async def test_chat_returns_scope():
             assert data["scope"]["product_type"] == "photo_album"
             assert data["scope"]["time_range"]["start_date"] == "2024-01-01"
             assert data["scope"]["time_range"]["end_date"] == "2024-01-07"
+
+@pytest.mark.asyncio
+async def test_upload_embeddings_stores_and_returns_count():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        payload = {
+            "embeddings": [
+                {"photo_id": "p1", "clip_embedding": [0.1, 0.2], "face_embedding": [0.3], "faces_detected": 1},
+                {"photo_id": "p2", "clip_embedding": [0.4, 0.5], "face_embedding": [0.6], "faces_detected": 0},
+            ]
+        }
+        response = await ac.post(
+            "/upload-embeddings",
+            json=payload,
+            headers={"X-Client-Id": "test-client-1"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["received"] == 2
+        assert data["total_stored"] == 2
+
+@pytest.mark.asyncio
+async def test_upload_embeddings_accumulates_batches():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        batch1 = {
+            "embeddings": [
+                {"photo_id": "p1", "clip_embedding": [0.1], "face_embedding": [0.2], "faces_detected": 1},
+            ]
+        }
+        batch2 = {
+            "embeddings": [
+                {"photo_id": "p2", "clip_embedding": [0.3], "face_embedding": [0.4], "faces_detected": 0},
+                {"photo_id": "p3", "clip_embedding": [0.5], "face_embedding": [0.6], "faces_detected": 2},
+            ]
+        }
+        headers = {"X-Client-Id": "test-client-2"}
+        await ac.post("/upload-embeddings", json=batch1, headers=headers)
+        response = await ac.post("/upload-embeddings", json=batch2, headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["received"] == 2
+        assert data["total_stored"] == 3
+
+@pytest.mark.asyncio
+async def test_upload_embeddings_missing_client_id_returns_422():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        payload = {
+            "embeddings": [
+                {"photo_id": "p1", "clip_embedding": [0.1], "face_embedding": [0.2], "faces_detected": 0},
+            ]
+        }
+        response = await ac.post("/upload-embeddings", json=payload)
+        assert response.status_code == 422
 
 @pytest.mark.asyncio
 async def test_chat_without_scope_backward_compatible():

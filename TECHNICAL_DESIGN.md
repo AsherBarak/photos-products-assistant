@@ -24,6 +24,18 @@ The system follows a Client-Server architecture:
         - `type`: "text" or "image".
         - `options`: List of `{id, label, image_url}`.
 
+### 3. Upload Embeddings
+`POST /upload-embeddings`
+- **Headers:** `X-Client-Id` (required) — UUID identifying the client session, persisted in `localStorage`.
+- **Request:** `UploadEmbeddingsRequest` containing a list of `PhotoEmbedding` objects (photo_id, clip_embedding, face_embedding, faces_detected).
+- **Response:** `UploadEmbeddingsResponse` with `received` (batch count) and `total_stored` (cumulative count for this client).
+- **Storage:** In-memory `defaultdict(list)` keyed by client_id. Lost on server restart (dev-only).
+
+### Client Identity
+- Client generates a UUID via `crypto.randomUUID()` on first load, persisted in `localStorage` as `mixtiles_client_id`.
+- Sent as `X-Client-Id` header on all requests (`/process-photos`, `/chat`, `/upload-embeddings`).
+- Required on `/upload-embeddings`; optional on existing endpoints (backward compatible).
+
 ## State Management
 - **Server:** Stateless endpoints. LangGraph maintains state within the request chain. History is currently passed from the client in each request.
 - **Client:** React `useState` for chat history, `summary` object, and picker visibility.

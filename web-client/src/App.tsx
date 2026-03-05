@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import { usePhotoService } from './PhotoServiceContext'
+import { getClientId } from './clientId'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -67,6 +68,8 @@ const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug')
 
 function App() {
   const photoService = usePhotoService()
+  const clientId = getClientId()
+  const apiHeaders = { 'Content-Type': 'application/json', 'X-Client-Id': clientId }
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -101,7 +104,7 @@ function App() {
         // 2. Process photos for summary (server)
         const response = await fetch('http://localhost:8000/process-photos', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiHeaders,
           body: JSON.stringify(photos),
         })
         if (!response.ok) throw new Error('Failed to process photos')
@@ -112,13 +115,18 @@ function App() {
         // 3. Fetch embeddings in batches
         for (let i = 0; i < photos.length; i += EMBED_BATCH_SIZE) {
           const batch = photos.slice(i, i + EMBED_BATCH_SIZE)
-          await Promise.all(batch.map(p => photoService.fetchEmbedding(p.id)))
+          const embeddings = await Promise.all(batch.map(p => photoService.fetchEmbedding(p.id)))
           const ready = Math.min(i + EMBED_BATCH_SIZE, photos.length)
           setDataReadiness(prev => ({
             ...prev,
             clip_embeddings: { ...prev.clip_embeddings, ready },
             face_embeddings: { ...prev.face_embeddings, ready },
           }))
+          fetch('http://localhost:8000/upload-embeddings', {
+            method: 'POST',
+            headers: apiHeaders,
+            body: JSON.stringify({ embeddings }),
+          }).catch(err => console.error('Failed to upload embeddings:', err))
         }
       } catch (error) {
         console.error('Error loading photos:', error)
@@ -161,7 +169,7 @@ function App() {
     try {
       const response = await fetch('http://localhost:8000/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders,
         body: JSON.stringify({
           messages: [...messages, userMessage],
           summary: summary,

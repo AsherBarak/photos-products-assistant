@@ -34,6 +34,12 @@ describe('App', () => {
           json: () => Promise.resolve({ important_days: [], trips: [] })
         })
       }
+      if (url.includes('/upload-embeddings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ received: 2, total_stored: 2 })
+        })
+      }
       if (url.includes('/chat')) {
         chatCallCount++
         const response: any = { response: 'Test Response' }
@@ -143,6 +149,30 @@ describe('App', () => {
     expect(secondChatBody.data_readiness.clip_embeddings.in_scope).toBeGreaterThan(0)
   })
 
+  it('sends X-Client-Id header on all requests', async () => {
+    renderApp()
+
+    await waitFor(() => expect(screen.queryByText(/Analyzing your photos/i)).not.toBeInTheDocument())
+
+    const input = screen.getByPlaceholderText(/Tell me about your photos/i)
+    const button = screen.getByRole('button')
+
+    fireEvent.change(input, { target: { value: 'Hello' } })
+    fireEvent.click(button)
+
+    await screen.findByText('Test Response')
+
+    // All fetch calls should include the X-Client-Id header
+    const allCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+    for (const call of allCalls) {
+      const headers = call[1]?.headers
+      if (headers) {
+        expect(headers['X-Client-Id']).toBeDefined()
+        expect(headers['X-Client-Id']).toMatch(/^.+$/) // non-empty
+      }
+    }
+  })
+
   it('works when server returns no scope (backward compatible)', async () => {
     // Override fetch to return no scope/picker from chat
     let chatCallCount = 0
@@ -151,6 +181,12 @@ describe('App', () => {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ important_days: [], trips: [] })
+        })
+      }
+      if (url.includes('/upload-embeddings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ received: 2, total_stored: 2 })
         })
       }
       if (url.includes('/chat')) {

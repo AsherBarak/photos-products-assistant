@@ -27,4 +27,29 @@ if data.get('picker'):
 else:
     print('  Picker: None')
 "
+echo -e "\n3. Upload embeddings test..."
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/upload-embeddings" \
+  -H "Content-Type: application/json" \
+  -H "X-Client-Id: smoke-test-client" \
+  -d '{
+    "embeddings": [
+      {"photo_id": "smoke1", "clip_embedding": [0.1, 0.2], "face_embedding": [0.3], "faces_detected": 1}
+    ]
+  }')
+if [ "$STATUS" = "200" ]; then
+  echo "  Upload embeddings: OK (200)"
+else
+  echo "  Upload embeddings: FAILED ($STATUS)"
+fi
+
+# Verify missing header returns 422
+STATUS_NO_HEADER=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/upload-embeddings" \
+  -H "Content-Type: application/json" \
+  -d '{"embeddings": []}')
+if [ "$STATUS_NO_HEADER" = "422" ]; then
+  echo "  Missing header rejection: OK (422)"
+else
+  echo "  Missing header rejection: FAILED ($STATUS_NO_HEADER)"
+fi
+
 echo -e "\n=== Done ==="

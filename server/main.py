@@ -1,15 +1,16 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import os
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 
 from models import (
     PhotoMetadata, ProcessedDay, PhotoSummary,
     Picker, PickerOption,
     Scope,
     ChatRequest, ChatResponse,
+    UploadEmbeddingsRequest, UploadEmbeddingsResponse,
 )
 from graph import chat_graph, llm
 
@@ -22,6 +23,8 @@ log = logging.getLogger("chat")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "true").lower() == "true"
 
 app = FastAPI()
+
+embedding_store: dict[str, list] = defaultdict(list)
 
 # Add CORS middleware
 app.add_middleware(
@@ -159,6 +162,17 @@ async def chat(request: ChatRequest):
             response="I'm having a bit of trouble reaching my brain right now (LLM error). Try typing '12345' to see my debug mode!",
             action="ERROR"
         )
+
+@app.post("/upload-embeddings", response_model=UploadEmbeddingsResponse)
+async def upload_embeddings(
+    request: UploadEmbeddingsRequest,
+    x_client_id: str = Header(..., alias="X-Client-Id"),
+):
+    embedding_store[x_client_id].extend(request.embeddings)
+    return UploadEmbeddingsResponse(
+        received=len(request.embeddings),
+        total_stored=len(embedding_store[x_client_id]),
+    )
 
 if __name__ == "__main__":
     import uvicorn

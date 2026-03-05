@@ -26,6 +26,22 @@ class PhotoSummary(BaseModel):
     trips: List[Trip]
 
 
+# --- Embedding Models ---
+
+class PhotoEmbedding(BaseModel):
+    photo_id: str
+    clip_embedding: List[float]
+    face_embedding: List[float]
+    faces_detected: int
+
+class UploadEmbeddingsRequest(BaseModel):
+    embeddings: List[PhotoEmbedding]
+
+class UploadEmbeddingsResponse(BaseModel):
+    received: int
+    total_stored: int
+
+
 # --- Picker Models ---
 
 class PickerOption(BaseModel):
